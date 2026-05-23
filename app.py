@@ -1,51 +1,71 @@
 import os
 import re
+import shutil
 import tempfile
 import subprocess
 import streamlit as st
+from pathlib import Path
+
+# Hàm tìm kiếm Pandoc trên máy tính (lấy từ code gốc của bạn)
+def find_pandoc():
+    paths = [
+        shutil.which("pandoc"),
+        r"C:\Program Files\Pandoc\pandoc.exe",
+        os.path.expandvars(r"C:\Users\%USERNAME%\AppData\Local\Pandoc\pandoc.exe"),
+        "pandoc" # Mặc định cho Linux/Mac hoặc server Web
+    ]
+
+    for p in paths:
+        if not p:
+            continue
+        path = Path(p)
+        # Nếu là file .exe tồn tại hoặc là lệnh hệ thống ("pandoc")
+        if path.exists() or p == "pandoc":
+            return p
+    return None
 
 st.set_page_config(page_title="Markdown to Word", page_icon="📝")
 st.title("Chuyển đổi Markdown sang Word")
+
+# Kiểm tra Pandoc trước khi chạy
+pandoc_path = find_pandoc()
+
+if not pandoc_path:
+    st.error("❌ Không tìm thấy Pandoc trên máy. Vui lòng cài đặt tại: https://pandoc.org/installing.html")
+    st.stop() # Dừng chạy code bên dưới nếu không có Pandoc
+
 st.write("Tải lên file Markdown (.md, .txt) để nhận lại file định dạng .docx")
 
-# Tạo giao diện upload file
 uploaded_file = st.file_uploader("Chọn file Markdown", type=["md", "txt"])
 
 if uploaded_file is not None:
-    # Lấy tên file gốc để làm tên file tải xuống
     original_name = os.path.splitext(uploaded_file.name)[0]
     
     with st.spinner('Đang xử lý...'):
         try:
-            # 1. Đọc nội dung file
             text = uploaded_file.read().decode("utf-8")
-
-            # Giữ xuống dòng đơn trong Markdown khi chuyển sang Word
             text = re.sub(r"(?<!\n)\n(?!\n)", "  \n", text)
 
-            # 2. Tạo file tạm an toàn cho môi trường web (tránh trùng lặp giữa các user)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".md") as temp_md:
                 temp_md.write(text.encode("utf-8"))
                 temp_md_path = temp_md.name
 
             output_docx_path = temp_md_path.replace(".md", ".docx")
 
-            # 3. Gọi Pandoc (trên server web, Pandoc sẽ nằm sẵn trong hệ thống)
+            # Sử dụng pandoc_path đã tìm được thay vì gọi chữ "pandoc" cứng ngắc
             cmd = [
-                "pandoc",
+                pandoc_path,
                 temp_md_path,
                 "-f", "markdown+tex_math_dollars+tex_math_single_backslash",
                 "-o", output_docx_path
             ]
             subprocess.run(cmd, check=True)
 
-            # 4. Đọc file Word đầu ra để chuẩn bị cho nút tải xuống
             with open(output_docx_path, "rb") as f:
                 docx_data = f.read()
 
             st.success("Chuyển đổi thành công!")
             
-            # Nút tải file
             st.download_button(
                 label="📥 Tải file Word về máy",
                 data=docx_data,
@@ -54,11 +74,10 @@ if uploaded_file is not None:
             )
 
         except subprocess.CalledProcessError as e:
-            st.error(f"Lỗi Pandoc: Không chuyển được file. Vui lòng kiểm tra lại nội dung.\n{e}")
+            st.error(f"Lỗi Pandoc: Không chuyển được file.\n{e}")
         except Exception as e:
             st.error(f"Đã xảy ra lỗi: {e}")
         finally:
-            # 5. Dọn dẹp file tạm để không làm đầy bộ nhớ server
             if 'temp_md_path' in locals() and os.path.exists(temp_md_path):
                 os.remove(temp_md_path)
             if 'output_docx_path' in locals() and os.path.exists(output_docx_path):
