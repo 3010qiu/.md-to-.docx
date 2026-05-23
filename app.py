@@ -28,20 +28,18 @@ if uploaded_zip is not None:
     
     with st.spinner('Đang giải nén và xử lý hình ảnh...'):
         try:
-            # Tạo một thư mục tạm thời, nó sẽ tự động bị xóa sau khi ra khỏi block 'with'
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_dir_path = Path(temp_dir)
                 
-                # 1. Lưu file ZIP người dùng tải lên
+                # 1. Lưu và giải nén ZIP
                 zip_path = temp_dir_path / "uploaded.zip"
                 zip_path.write_bytes(uploaded_zip.read())
                 
-                # 2. Giải nén ZIP
                 extract_dir = temp_dir_path / "extracted"
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     zip_ref.extractall(extract_dir)
                 
-                # 3. Tìm file Markdown đầu tiên trong thư mục giải nén (bỏ qua thư mục rác của Mac)
+                # 2. Tìm file Markdown ở bất kỳ đâu trong ZIP
                 md_files = [f for f in extract_dir.rglob("*.md") if "__MACOSX" not in f.parts]
                 
                 if not md_files:
@@ -50,7 +48,10 @@ if uploaded_zip is not None:
                 
                 main_md = md_files[0]
                 
-                # 4. Đọc và chuẩn hóa nội dung (thử utf-8 trước, nếu lỗi chuyển sang utf-8-sig)
+                # QUAN TRỌNG: Xác định chính xác thư mục đang chứa file Markdown
+                md_folder = main_md.parent 
+                
+                # 3. Chuẩn hóa nội dung
                 try:
                     text = main_md.read_text(encoding="utf-8")
                 except UnicodeDecodeError:
@@ -61,20 +62,22 @@ if uploaded_zip is not None:
                 
                 output_docx_path = temp_dir_path / "output.docx"
                 
-                # CHỈNH SỬA Ở ĐÂY: Tìm file template.docx trong file ZIP tải lên
-                template_path = extract_dir / "template.docx"
+                # 4. Tìm file template.docx ở MỌI NGÓC NGÁCH trong file nén
+                template_files = list(extract_dir.rglob("template.docx"))
                 
-                # Cấu hình mặc định của Pandoc
+                # 5. Cấu hình Pandoc
+                # Dùng thư mục md_folder làm gốc để tìm ảnh (nhờ vậy ![](hinh1.png) mới hoạt động)
                 pandoc_args = [
                     "-f", "markdown+tex_math_dollars+tex_math_single_backslash",
-                    f"--resource-path={extract_dir}" 
+                    f"--resource-path={str(md_folder)}"
                 ]
                 
-                # Nếu phát hiện có file template, lệnh cho Pandoc áp dụng format đó
-                if template_path.exists():
+                # Nếu tìm thấy file template, báo cho Pandoc biết
+                if template_files:
+                    template_path = template_files[0]
                     pandoc_args.append(f"--reference-doc={str(template_path)}")
                 
-                # 5. Gọi pypandoc
+                # 6. Chuyển đổi
                 pypandoc.convert_file(
                     str(main_md),
                     'docx',
@@ -82,21 +85,10 @@ if uploaded_zip is not None:
                     extra_args=pandoc_args
                 )
                 
-                # 5. Gọi pypandoc, truyền thêm --resource-path để Pandoc biết đường dẫn tìm ảnh
-                pypandoc.convert_file(
-                    str(main_md),
-                    'docx',
-                    outputfile=str(output_docx_path),
-                    extra_args=[
-                        "-f", "markdown+tex_math_dollars+tex_math_single_backslash",
-                        f"--resource-path={extract_dir}" 
-                    ]
-                )
-                
-                # 6. Đọc file Word xuất ra để tải về
+                # 7. Tải file Word đã hoàn thiện
                 docx_data = output_docx_path.read_bytes()
 
-            st.success("Chuyển đổi thành công! Ảnh đã được nhúng vào Word.")
+            st.success("Chuyển đổi thành công! Ảnh và Template đã được áp dụng.")
             
             st.download_button(
                 label="📥 Tải file Word về máy",
