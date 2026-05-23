@@ -1,38 +1,23 @@
 import os
 import re
-import shutil
 import tempfile
-import subprocess
 import streamlit as st
-from pathlib import Path
-
-# Hàm tìm kiếm Pandoc trên máy tính (lấy từ code gốc của bạn)
-def find_pandoc():
-    paths = [
-        shutil.which("pandoc"),
-        r"C:\Program Files\Pandoc\pandoc.exe",
-        os.path.expandvars(r"C:\Users\%USERNAME%\AppData\Local\Pandoc\pandoc.exe"),
-        "pandoc" # Mặc định cho Linux/Mac hoặc server Web
-    ]
-
-    for p in paths:
-        if not p:
-            continue
-        path = Path(p)
-        # Nếu là file .exe tồn tại hoặc là lệnh hệ thống ("pandoc")
-        if path.exists() or p == "pandoc":
-            return p
-    return None
+import pypandoc
 
 st.set_page_config(page_title="Markdown to Word", page_icon="📝")
 st.title("Chuyển đổi Markdown sang Word")
 
-# Kiểm tra Pandoc trước khi chạy
-pandoc_path = find_pandoc()
+# Hàm tự động tải Pandoc nếu máy chủ (hoặc máy cá nhân) chưa có
+@st.cache_resource
+def setup_pandoc():
+    try:
+        pypandoc.get_pandoc_version()
+    except OSError:
+        with st.spinner("Đang khởi tạo Pandoc cho máy chủ (chỉ mất vài giây ở lần chạy đầu tiên)..."):
+            pypandoc.download_pandoc()
 
-if not pandoc_path:
-    st.error("❌ Không tìm thấy Pandoc trên máy. Vui lòng cài đặt tại: https://pandoc.org/installing.html")
-    st.stop() # Dừng chạy code bên dưới nếu không có Pandoc
+# Chạy kiểm tra/tải Pandoc ngay khi mở web
+setup_pandoc()
 
 st.write("Tải lên file Markdown (.md, .txt) để nhận lại file định dạng .docx")
 
@@ -43,24 +28,26 @@ if uploaded_file is not None:
     
     with st.spinner('Đang xử lý...'):
         try:
+            # Đọc và xử lý nội dung
             text = uploaded_file.read().decode("utf-8")
             text = re.sub(r"(?<!\n)\n(?!\n)", "  \n", text)
 
+            # Tạo file tạm
             with tempfile.NamedTemporaryFile(delete=False, suffix=".md") as temp_md:
                 temp_md.write(text.encode("utf-8"))
                 temp_md_path = temp_md.name
 
             output_docx_path = temp_md_path.replace(".md", ".docx")
 
-            # Sử dụng pandoc_path đã tìm được thay vì gọi chữ "pandoc" cứng ngắc
-            cmd = [
-                pandoc_path,
+            # Gọi pypandoc để chuyển đổi thay vì dùng subprocess
+            pypandoc.convert_file(
                 temp_md_path,
-                "-f", "markdown+tex_math_dollars+tex_math_single_backslash",
-                "-o", output_docx_path
-            ]
-            subprocess.run(cmd, check=True)
+                'docx',
+                outputfile=output_docx_path,
+                extra_args=["-f", "markdown+tex_math_dollars+tex_math_single_backslash"]
+            )
 
+            # Đọc file Word xuất ra
             with open(output_docx_path, "rb") as f:
                 docx_data = f.read()
 
@@ -73,11 +60,10 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
-        except subprocess.CalledProcessError as e:
-            st.error(f"Lỗi Pandoc: Không chuyển được file.\n{e}")
         except Exception as e:
             st.error(f"Đã xảy ra lỗi: {e}")
         finally:
+            # Dọn dẹp file tạm
             if 'temp_md_path' in locals() and os.path.exists(temp_md_path):
                 os.remove(temp_md_path)
             if 'output_docx_path' in locals() and os.path.exists(output_docx_path):
